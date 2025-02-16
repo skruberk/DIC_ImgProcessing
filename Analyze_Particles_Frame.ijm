@@ -1,5 +1,5 @@
 // Macro that extracts particle x,y pos whatever else with frame number
-
+//
 setBatchMode(true) //prevents updating after each frame so macro runs faster
 
 run("Set Measurements...", "centroid perimeter shape redirect=None decimal=3");
