@@ -1,45 +1,48 @@
 // Macro that extracts particle x,y pos whatever else with frame number
-//
+//make sure that before you run this you go into set measurements and manually check
+//the measurements you want, script relies on that
 setBatchMode(true) //prevents updating after each frame so macro runs faster
 
-run("Set Measurements...", "centroid perimeter shape redirect=None decimal=3");
+run("Set Measurements...", "area centroid perimeter shape redirect=None decimal=3");
 // Create a custom table to store results
 table = Table.create("Particles with Frame Data"); //customTable = newArray("X", "Y", "Frame");  
 
 // frame number
 nFrames = nSlices;  
 
-// Open the file *once* before the loop.  This is crucial!
+// open file *once* before the loop
 file = File.open("/Users/kskruber/Documents/any.csv", "w"); // "w" for write, overwrites if exists
 // Write the header row (only once)
-print(file, "Xpos,Ypos,Frame,perim,AR"); // Add a header row for clarity
+print(file, "area, Xpos,Ypos,Frame,perim,AR"); // Add a header row for clarity
 
-// Loop over all frames in the stack
+// loop over all frames in the stack
 for (frame = 1; frame <= nFrames; frame++) {
     setSlice(frame);  // Set to the current frame
-    run("Analyze Particles...", "size=16-75 display exclude clear");  // run Analyze Particles
+    //*****Important thresholding parameters: change that size number***********
+    run("Analyze Particles...", "size=100-700 display exclude clear");  // run Analyze Particles
     // Get the number of results for the current frame
     nResult = nResults();
     
-    // Loop over all results for the current frame and add the frame number
+    // loop over all results for the current frame, add the frame number
     for (i = 0; i < nResult; i++) {
-        xPos = getResult("X", i);  // Get X position
-        yPos = getResult("Y", i);  // Get Y position
-        perim=getResult("perimeter",i);
-        aspectRatio = getResult("AR", i);// Get Aspect Ratio
+    	area = getResult("Area",i); //get
+        xPos = getResult("X", i);  // get x
+        yPos = getResult("Y", i);  // get y
+        perim=getResult("Perim.",i); // get perim
+        aspectRatio = getResult("AR", i);// get ar
         
         // write to file within loop
-        print(file, xPos + "," + yPos + "," + frame + "," + perim + "," + aspectRatio );  // comma-separated values
+        print(file, area + "," + xPos + "," + yPos + "," + frame + "," + perim + "," + aspectRatio );  // comma-separated values
         // Add X, Y, and Frame number to the results table
-        
+        setResult("Area", i, area);  // Update column
         setResult("X", i, xPos);  // Update X column
         setResult("Y", i, yPos);  // Update Y column
         setResult("Frame", i, frame);  // Add Frame column 
-        setResult("perimeter",i, perim);
+        setResult("Perim.",i, perim);
         setResult("AR",i, aspectRatio);
         
     }
-    updateResults();  // Update the results table with the new data
+    updateResults();  // update results table
  }    
     
 // Display the overlay on the current image
