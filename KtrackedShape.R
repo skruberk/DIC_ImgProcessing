@@ -1,5 +1,7 @@
 #K-Tracked Particles
 #restart 120-899, 120-314, 315-505, 506-696, 697-899
+#1-240 241-480 481-917
+#900-1619 64C cont_1 900. 900-1139 1140-1380 1381-1619. 66C
 rm(list = ls())
 rm(list = ls(all.names = TRUE))
 
@@ -9,13 +11,15 @@ library(FNN)  # Fast Nearest Neighbors package
 library(viridis) #color aesthetics
 
 #dataimport 
+# NAME OF DATASET 
+name <- "1_240_57C_FOV1" 
 df<-data
 # Define parameters
 k_neighbors <- 3 #start with 3
 #number of neighbors to check 1-3 seems to work for well sep particles, low noise
 #low noise, not lots of neighbors, 4-6 and higher: fast and erratic movement lots of 
 #neighbors noisy tracking 
-max_distance <- 15  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
+max_distance <- 7.5  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
 gap_tolerance <- 3  # Number of frames a particle can disappear before being reassigned, this number is very sensitive
 
 # Initialize Particle_ID column
@@ -44,29 +48,29 @@ for (frame in unique(df$Frame)[-1]) {
     
     valid_match <- which(distances < max_distance)  # filter valid matches
     if (length(valid_match) > 0) {
-      best_match <- indices[which.min(distances)]  # Choose first valid match
+      best_match <- indices[which.min(distances)]  # choose first valid match, could be optimization point 
       matched_ID <- previous$ID[best_match]
       
       # has ID already been assigned to frame?>
       if (!(matched_ID %in% assigned_IDs)) {
         df$ID[df$Frame == frame & df$Xpos == current$Xpos[i] & df$Ypos == current$Ypos[i]] <- matched_ID
-        assigned_IDs <- c(assigned_IDs, matched_ID)  # Mark ID as used
+        assigned_IDs <- c(assigned_IDs, matched_ID)  # mark ID as used
       } else {
         # if ID already taken assign new one
         df$ID[df$Frame == frame & df$Xpos == current$Xpos[i] & df$Ypos == current$Ypos[i]] <- particle_counter
         particle_counter <- particle_counter + 1
       }
     } else {
-      # if no match is found assign a new ID
+      # if no match is found assign new ID
       df$ID[df$Frame == frame & df$Xpos == current$Xpos[i] & df$Ypos == current$Ypos[i]] <- particle_counter
       particle_counter <- particle_counter + 1
     }
   }
 }
-#filter short lived particles 
+#filter short lived particles, QC 
 df <- df %>%
   group_by(ID) %>%
-  filter(n() > 3)%>%   # Remove particles appearing in fewer than x frames
+  filter(n() > 9)%>%   # Remove particles appearing in fewer than x frames
   ungroup()
 
 t_int=5 #seconds/frame
@@ -75,12 +79,48 @@ df <- df %>%
   arrange(ID, Frame) %>%
   group_by(ID) %>%
   mutate(
-    stepwise_displacement = sqrt((Xpos - lag(Xpos))^2 + (Ypos - lag(Ypos))^2),
-    stepwise_displacement = replace_na(stepwise_displacement, 0),  # Replace first NA with 0
-    stepwise_speed = stepwise_displacement * (1/t_int)  # Speed per step
+    # Calculate stepwise displacement
+    stepwise_displacement = sqrt((Xpos - lag(Xpos))^2 + (Ypos - lag(Ypos))^2)
   ) %>%
-  ungroup() 
-  
+  # Replace NA in stepwise displacement with 0 (only in a separate mutate step)
+  mutate(
+    stepwise_displacement = replace_na(stepwise_displacement, 0)
+  ) %>%
+  # Filter out rows where stepwise displacement is greater than 20
+  filter(stepwise_displacement <= 10 | stepwise_displacement == 0) %>%
+  mutate(
+    # Calculate stepwise speed
+    stepwise_speed = stepwise_displacement * (1 / t_int)  # Speed per step
+  ) %>%
+  ungroup()
+
+
+#see the trajectories
+p<-ggplot(df, aes(x = Xpos, y = Ypos, color = factor(ID), group = factor(ID))) +
+  geom_path() +  # Connect points to form trajectories
+  labs(title = "Particle Trajectories", x = "X Position", y = "Y Position", color = "Particle ID") +
+  theme_minimal()+
+  theme(legend.position = "none")
+p
+
+#track quality control
+# Track Length (sum of all displacements for each ID)
+track_length <- df %>%
+  group_by(ID) %>%
+  summarise(track_length = sum(stepwise_displacement))
+
+# Number of ID changes (count of unique IDs for each particle across frames)
+id_changes <- df %>%
+  group_by(ID) %>%
+  summarise(id_changes = n_distinct(ID))
+
+# Merging track length and ID changes into a single data frame
+track_quality_metrics <- track_length %>%
+  left_join(id_changes, by = "ID")
+
+# output QC results
+write.csv(df, paste0(name, "_trajectoryQC.csv"))
+
 #convert from microns back to pixels for image comparison 
 pixel_width <- 0.16  # image scale is this right?
 pixel_height <- 0.16  # 
@@ -104,78 +144,55 @@ p <- ggplot(df, aes(x = Xpos, y = Ypos, group = ID, color = AR)) +
         axis.ticks = element_line(color = "black"),
         axis.line = element_line(color = "black"))   # Keep axis lines
 p
-#high perimeter to area ratio would tell you how lamellipodial like the outline is
-df$group <- "group"
-p<- ggplot(df, aes(x=group, y=AR))+ ylim(0,5)+ geom_boxplot(outlier.shape = NA)+ geom_beeswarm(dodge.width=0.15,aes()) + scale_colour_brewer(palette = "Set2") +#color by group eventully
- theme_bw()+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
-p
 
-
-# APR vs AR ----------------------------------------------------------
+#perimter to area ratio
 df<- df %>%
   mutate(
     sqrtarea = sqrt(area),
-    APRatio = sqrtarea / perim
+    PARatio = perim/sqrtarea 
   )
 
-p <- ggplot(df, aes(x = stepwise_speed, y = AR, group = ID, color = ID)) + 
-  geom_line(alpha = 0.7) +  # Draw lines for each ID
-  geom_point(alpha = 0.7) +  # Optional: Show points for clarity
-  xlim(0, 2.0) +
-  ylim(0, 4) +
-  labs(
-    title = "Speed vs. Aspect Ratio",
-    x = "Speed",
-    y = "Aspect Ratio"
-  ) +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black")
-  )
-p
-
-df$group <- "1_240_57Cto65C_FOV1"  # name group in df
+# Output csv ----------------------------------------------------------
+df$group <- "57C_1_240_FOV1"  # name group in df
 # save velocity aspect ratio data
-write.csv(df, "1_240_57Cto65C_FOV1_shape.csv", row.names = FALSE)
-#if importing into MultiTrackmateAnalysis run
-df<-data
+write.csv(df, paste0(name, "_shape.csv",row.names = FALSE))
+
+# Summary Stats -----------------------------------------------------------
 #df$temp <- "64"  # name group in df
 summary_stats <- df %>%
   group_by(group, ID) %>%  # group by group and ID
-  filter(stepwise_speed <= 15) %>%  # quality control
+  filter(stepwise_speed <= 25) %>%  # quality control
   summarise(
     mean_speed = mean(stepwise_speed, na.rm = TRUE),
+    median_speed=median(stepwise_speed,na.rm=TRUE),
     sd_speed = sd(stepwise_speed, na.rm = TRUE),
     mean_AR = mean(AR, na.rm = TRUE),
     sd_AR = sd(AR, na.rm = TRUE),
-    mean_APRatio = mean(APRatio, na.rm = TRUE),
-    sd_APRatio = sd(APRatio, na.rm = TRUE),
+    mean_PARatio = mean(PARatio, na.rm = TRUE),
+    sd_PARatio = sd(PARatio, na.rm = TRUE),
     n = n()  # Count of observations
   ) %>%
   ungroup()
 
-
 View(summary_stats)
 summary_stats$temp <- "57"  # name group in df
-write.csv(summary_stats, "57temp_summary.csv", row.names = FALSE)
+write.csv(summary_stats, paste0(name, "_summary_stats.csv"))
 #clear console -> cat("\014")
 
 # Visualization -----------------------------------------------------------
 df$temp <- as.factor(df$temp)  # Convert to factor
 
-p<- ggplot(df, aes(x=temp, y=mean_APRatio))+ ylim(0,0.25)+ geom_boxplot(outlier.shape = NA)+ geom_beeswarm(dodge.width=0.15,aes(color=temp)) + scale_colour_brewer(palette = "Set2") #color by group eventully
+p<- ggplot(summary_stats, aes(x=group, y=mean_PARatio))+ ylim(0,0.25)+ geom_boxplot(outlier.shape = NA)+ geom_beeswarm(dodge.width=0.15,aes(color=temp)) + scale_colour_brewer(palette = "Set2") #color by group eventully
 p 
 p<-p + theme_bw()+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.x = element_blank()) + 
   ylab("aspect ratio") 
 p
 
-library(ggplot2)
-p<-ggplot(df, aes(x = mean_AR, y = mean_speed, color = temp)) +
+p<-ggplot(summary_stats, aes(x = mean_PARatio, y = mean_speed, color = group)) +
   geom_point() +
+  xlim(6,10)+
   geom_smooth(method = "lm", se = FALSE) +  # Add trend lines for each temperature group
-  labs(x = "Aspect Ratio", y = "Speed", title = "Speed vs Aspect Ratio by Temperature") +
+  labs(x = "Perimeter to Area", y = "Speed", title = "Speed vs Aspect Ratio by Temperature") +
   theme_minimal()
 p
 
@@ -185,50 +202,84 @@ df <- df %>%
   group_by(ID) %>%
   mutate(
     delta_AR = AR - lag(AR),  # change in Aspect Ratio
-    delta_speed = stepwise_speed - lag(stepwise_speed)  # Absolute change in Speed
+    delta_speed = abs(stepwise_speed - lag(stepwise_speed))  # Absolute change in Speed
   ) %>%
-  ungroup() #%>%  # Ungroup to apply filtering to the full dataset
-  #filter(delta_speed >= -2.5, delta_speed <= 2.5)   # Remove extreme speed changes
+  ungroup() #%>%  # apply filtering to the full dataset
 
-
-p<-ggplot(df, aes(x = delta_AR, y = delta_speed)) +
+#average speed vs average shape 
+p<-ggplot(summary_stats, aes(x = median_speed, y = mean_AR)) +
   geom_point(alpha = 0.6) +
-  ylim(-2.5,2.5)+
-  xlim(-2.5,2.5)+
+  #ylim(0,15)+
+  #xlim(0,2.5)+
   geom_smooth(method = "lm", se = FALSE, color = "blue") +  #trend line
-  labs(title = "Change in Aspect Ratio vs. Change in Speed",
-       x = "Δ Aspect Ratio",
-       y = "Δ Speed") +
+  labs(title = "Median Speed vs Aspect Ratio at 57C FOV1",
+       x = "median speed",
+       y = "mean Aspect Ratio") +
   theme_minimal()
 p
-cor_test <- cor.test(df$delta_AR, df$delta_speed, use = "complete.obs")
+cor_test <- cor.test(summary_stats$median_speed, summary_stats$mean_AR, use = "complete.obs")
 print(cor_test)
 
+# Directional Change ------------------------------------------------------
+# Calculate Cell Turning aka Angular Speed --------------------------------------------------
+# calculate the smallest difference between two angles using vectors instead
+angle_difference <- function(angle1, angle2) { 
+  diff <- angle2 - angle1
+  diff <- atan2(sin(diff), cos(diff))  # Ensures result is between -π and π
+  return(diff * (180 / pi))  # Convert to degrees
+}
+
+df_direction <- df %>% 
+  group_by(ID) %>% 
+  mutate(
+    dx = Xpos - lag(Xpos, default = Xpos[1]),
+    dy = Ypos - lag(Ypos, default = Ypos[1]), # displacement vector
+    angle = atan2(dy, dx), # compute angle in radians btw pos x axis and the vector dx,dy
+    # use function to compute angle changes
+    angle_change_deg = c(NA, mapply(angle_difference, head(angle, -1), tail(angle, -1)))  # angle change calculation
+  ) %>% 
+  ungroup()
+
+
+# plot direction changes by angle instead 
+p<-ggplot(df_direction, aes(x = Xpos, y = Ypos, color = abs(angle_change_deg))) +
+  geom_point(size = 2) +
+  scale_color_gradient(low = "blue", high = "red",limits = c(0, 360)) +  # can make this a better scale too
+  labs(title = "Cell Directional Changes",
+       x = "X Position",
+       y = "Y Position",
+       color = "Angle Change (°)") +
+  theme_minimal()
+p
+
+
+
+
+
+
 # Summary Stats -----------------------------------------------------------
-p <- ggplot(summary_stats, aes(y = mean_APRatio, x = mean_speed, color = group)) + 
+p <- ggplot(summary_stats, aes(y = mean_PARatio, x = mean_speed, color = group)) + 
   geom_point(size = 1, alpha = 0.7) +  # Scatter plot points
   scale_colour_brewer(palette = "Set2") +  # Color by group
-  ylim(0, 5) +  # Set Y-axis limits
+  #ylim(0, 5) +  # Set Y-axis limits
   theme_bw() + 
   theme(
     panel.grid.major = element_blank(), 
-    panel.grid.minor = element_blank(), 
-    axis.text.x = element_blank()
-  ) + 
-  ylab("y") + 
-  xlab("x")
+    panel.grid.minor = element_blank() 
+    #axis.text.x = element_blank()
+  ) 
 p
 
-p <- ggplot(df, aes(x = mean_speed, y = mean_AR, group = temp, color = temp)) + 
+p <- ggplot(df, aes(x = stepwise_speed, y = PARatio)) + 
   geom_line(alpha = 0.35) +  # Draw lines for each ID
   #geom_point(alpha = 0.7) +  # Optional: Show points for clarity
-  geom_smooth(method = "loess", se = FALSE, alpha = 0.7) +
-  xlim(0, 14) +
-  ylim(0, 4.5) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.7) +
+  #xlim(0, 1) +
+  #ylim(1, 5) +
   labs(
-    title = "Speed vs. Aspect Ratio",
+    title = "Speed vs. Perimter/Area Ratio One Movie at 57",
     x = "speed",
-    y = "Aspect Ratio"
+    y = "Perimeter to Area Ratio"
   ) +
   theme_minimal() +
   theme(
@@ -238,15 +289,13 @@ p <- ggplot(df, aes(x = mean_speed, y = mean_AR, group = temp, color = temp)) +
   )
 p
 
-
-
 df_avg <- df %>%
-  group_by(temp, ID) %>%  # Group by temperature and ID
+  group_by(group, ID) %>%  # G
   summarise(
-    mean_speed = mean(mean_speed, na.rm = TRUE),  # Average speed for each ID and temperature
-    mean_AR = mean(mean_AR, na.rm = TRUE),  # Average AR for each ID and temperature
-    sd_speed = sd(mean_speed, na.rm = TRUE),  # Standard deviation of speed
-    sd_AR = sd(mean_AR, na.rm = TRUE)  # Standard deviation of AR
+    mean_speed = mean(mean_speed, na.rm = TRUE),  # 
+    mean_AR = mean(mean_AR, na.rm = TRUE),  # 
+    sd_speed = sd(mean_speed, na.rm = TRUE),  # 
+    sd_AR = sd(mean_AR, na.rm = TRUE)  # 
   ) %>%
   ungroup() %>%  # remove grouping after summarizing
   group_by(temp) %>%  # group again by temperature to get overall averages
@@ -280,4 +329,20 @@ p <- ggplot(df, aes(x = mean_speed, y =mean_AR, group = temp, color = temp)) +
   )
 p
 
-
+p <- ggplot(df, aes(x = stepwise_speed, y = PARatio, group = ID, color = ID)) + 
+  geom_line(alpha = 0.7) +  # Draw lines for each ID
+  geom_point(alpha = 0.7) +  # Optional: Show points for clarity
+  #xlim(0, 2.0) +
+  #ylim(0, 4) +
+  labs(
+    title = "Speed vs. Aspect Ratio",
+    x = "Speed",
+    y = "Perimeteter to Aspect Ratio"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black")
+  )
+p
