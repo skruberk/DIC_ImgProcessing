@@ -60,26 +60,25 @@ df_all <- data %>%
   ungroup()
 
 
-
-# Distance Traveled -------------------------------------------------------
-
-
 # Calculate Cell Turning aka Angular Speed --------------------------------------------------
-# first calculate displacement dx,dy and the angle  in radians btw points store in DF 
-# have to make the first value zero or null to keep everything the same length but that does mean the color coding is off by one
-#does that turning threshold seem low? it has to be lower than you think bc the xy pos are centroids
-#if this is less that ideal i get it, i have a more computationally $$ solution we could explore
-df_all <- df_all %>%
-  group_by(ID) %>%
+# calculate the smallest difference between two angles using vectors instead
+angle_difference <- function(angle1, angle2) { 
+  diff <- angle2 - angle1
+  diff <- atan2(sin(diff), cos(diff))  # Ensures result is between -π and π
+  return(diff * (180 / pi))  # Convert to degrees
+}
+
+df_all <- df_all %>% 
+  group_by(ID) %>% 
   mutate(
     dx = Xpos - lag(Xpos, default = Xpos[1]),
-    dy = Ypos - lag(Ypos, default = Ypos[1]),#displacement vector 
-    angle = atan2(dy, dx), #compute angle in radians btw pos x axis and the vector dx,dy
-    angle_change = atan2(sin(angle - lag(angle, default = angle[1])), cos(angle - lag(angle, default = angle[1]))), #sin and cos are normalizing the angle diff btw -pi and +pi 
-    angle_change_deg = angle_change * (180 / pi),
-    #change_direction = abs(angle_change_deg) > 15  # threshold of 15 degrees
-  ) %>%
+    dy = Ypos - lag(Ypos, default = Ypos[1]), # displacement vector
+    angle = atan2(dy, dx), # compute angle in radians btw pos x axis and the vector dx,dy
+    # use function to compute angle changes
+    angle_change_deg = c(NA, mapply(angle_difference, head(angle, -1), tail(angle, -1)))  # angle change calculation
+  ) %>% 
   ungroup()
+
 
 # plot direction changes by angle instead 
 p<-ggplot(df_all, aes(x = Xpos, y = Ypos, color = abs(angle_change_deg))) +
@@ -121,32 +120,9 @@ summary_stats <- summary_stats %>%
 View(summary_stats)
 
 
-summary_stats$group <- "70C_fov1"  # name group in df
+summary_stats$group <- "FOV_2_1-240_57C"  # name group in df
 # Save the tracked data, manually set working dir
-write.csv(summary_stats, "70C_endframes_fov.csv", row.names = FALSE)
-
-# Perimeter to Area (Cell Shape Analysis Only) ----------------------------
-df_all <- data %>%
-  mutate(
-    APRatio = area / perim
-  )
-summary_stats <- df_all %>%
-  group_by(ID) %>%
-  summarize(mean_APRatio = mean(APRatio, na.rm = TRUE))
-
-# view summary of all data per id
-summary_stats <- df_all %>%
-  select(ID, total_distance, speed, total_displacement, mean_APRatio) %>%
-  distinct()
-View(summary_stats)
-#velocity vs Area/Perimeter ratio group by multiple groups
-p <- ggplot(df_all, aes(x = APRatio, y = mean_speed)) + 
-  geom_point() +  # Simple scatter plot
-  theme_bw() + 
-  theme(panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank())
-
-p
+write.csv(summary_stats, "FOV_2_1-240_57C.csv", row.names = FALSE)
 
 # Save the tracked data, manually set working dir
 write.csv(summary_stats, "tracked_analysis.csv", row.names = FALSE)
