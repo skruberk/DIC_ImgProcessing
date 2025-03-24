@@ -1,7 +1,6 @@
 #K-Tracked Particles
-#restart 120-899, 120-314, 315-505, 506-696, 697-899
-#1-240 241-480 481-917
-#900-1619 64C cont_1 900. 900-1139 1140-1380 1381-1619. 66C
+
+#restart
 rm(list = ls())
 rm(list = ls(all.names = TRUE))
 
@@ -10,12 +9,13 @@ library(dplyr)
 library(FNN)  # Fast Nearest Neighbors package
 library(viridis) #color aesthetics
 
-#dataimport 
+#DO DATA IMPORT HERE##################dataimport 
+
 # NAME OF DATASET 
-name <- "1_240_57C_FOV1" 
+name <- "66C_120_360_FOV_1" 
 df<-data
 # Define parameters
-k_neighbors <- 3 #start with 3
+k_neighbors <- 2 #start with 3
 #number of neighbors to check 1-3 seems to work for well sep particles, low noise
 #low noise, not lots of neighbors, 4-6 and higher: fast and erratic movement lots of 
 #neighbors noisy tracking 
@@ -70,10 +70,11 @@ for (frame in unique(df$Frame)[-1]) {
 #filter short lived particles, QC 
 df <- df %>%
   group_by(ID) %>%
-  filter(n() > 9)%>%   # Remove particles appearing in fewer than x frames
+  filter(n() > 6)%>%   # Remove particles appearing in fewer than x frames
   ungroup()
 
 t_int=5 #seconds/frame
+df$time <- df$Frame * t_int
 #get instantaneous displacement at each step, euclidean distance
 df <- df %>%
   arrange(ID, Frame) %>%
@@ -136,7 +137,7 @@ p <- ggplot(df, aes(x = Xpos, y = Ypos, group = ID, color = AR)) +
   #geom_path(size = 1) +    # Plot trajectory
   geom_point(size = 2) +   # Mark each recorded position
   scale_color_viridis_c(option = "plasma", name = "Aspect Ratio") +  
-  labs(title = "Particle Trajectories by Aspect Ratio", 
+  labs(title = "Particle Trajectories by Aspect Ratio 64C", 
        x = "X Position", 
        y = "Y Position") +  
   theme_minimal() +
@@ -145,7 +146,7 @@ p <- ggplot(df, aes(x = Xpos, y = Ypos, group = ID, color = AR)) +
         axis.line = element_line(color = "black"))   # Keep axis lines
 p
 
-#perimter to area ratio
+#perimeter to area ratio
 df<- df %>%
   mutate(
     sqrtarea = sqrt(area),
@@ -153,12 +154,77 @@ df<- df %>%
   )
 
 # Output csv ----------------------------------------------------------
-df$group <- "57C_1_240_FOV1"  # name group in df
+df$group <- paste0(name)  # name group in df
 # save velocity aspect ratio data
-write.csv(df, paste0(name, "_shape.csv",row.names = FALSE))
+write.csv(df, paste0(name, "_shape.csv"))
 
 # Summary Stats -----------------------------------------------------------
-#df$temp <- "64"  # name group in df
+#combine all the files: first set WD
+path <- getwd()
+csvcomb <- list.files(path, pattern = "\\.csv$", full.names = TRUE)
+datacomb <- bind_rows(lapply(csvcomb, read_csv))
+# Save the combined data to a new CSV file
+write_csv(datacomb, "comb_output.csv")
+#reimport the summary combined data as df 
+df<-data
+df$temp <- "66"  # name group in df
+
+# Motility Mode -----------------------------------------------------------
+#motility mode cutoff
+# Define AR cutoff
+time_int<-5
+epsilon <- 1e-8 #prevent div by 0 error 
+motility_mode <- df %>%
+  mutate(
+    AR_bin = case_when(
+      AR >= 1 & AR < 1.5 ~ "1-1.5",
+      AR >= 1.5 & AR < 2.0 ~ "1.5-2",
+      AR >= 2.0 & AR < 2.5 ~ "2-2.5",
+      AR >= 2.5 & AR < 3 ~ "2.5-3",
+      AR >= 3 & AR < 3.5 ~ "3-3.5",
+      AR >= 3.5 & AR < 4.0 ~ "3.5-4",
+      AR >= 4 ~ "+4",
+      TRUE ~ "Other"  # For AR values outside of the range, if needed
+    )
+  ) %>%
+  group_by(temp, AR_bin) %>%
+  summarise(
+    total_time = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Percentage = (total_time / sum(total_time)) * 100
+  )
+p<-ggplot(motility_mode, aes(x = AR_bin, y = Percentage, fill = AR_bin)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_viridis_d(option = "D", direction = -1) +  # Apply viridis color scale
+  labs(x = "Aspect Ratio Range", y = "Percentage of Total Time", 
+       title = "Motility Mode") +
+  facet_wrap(~ temp) +  # Separate plots by temperature
+  theme_minimal() +
+  theme(panel.grid = element_blank())  
+p
+
+
+# Motility Mode Ave per ID ------------------------------------------------
+df<-data
+df$temp <- "66"  # name group in df
+ave_motility<- df %>%
+  group_by(group, ID,temp) %>%  # group and ID
+           #filter(stepwise_speed <= 25) %>%  # quality control
+           summarise(
+             mean_AR = mean(AR, na.rm = TRUE),
+             n = n() 
+           ) %>%
+  ungroup()
+p<-ggplot(ave_motility, aes(x = temp, y = mean_AR, color = mean_AR)) +
+  geom_jitter(width = 0.1, height = 0.1, size = 1)+
+  scale_color_viridis(option = "C", direction = 1) +
+  labs(x = "temp", y = "average Aspect Ratio", title = "Aspect Ratio by Temperature") +
+  theme_minimal()+
+  theme(panel.grid = element_blank()) 
+p
+
 summary_stats <- df %>%
   group_by(group, ID) %>%  # group by group and ID
   filter(stepwise_speed <= 25) %>%  # quality control
@@ -228,7 +294,7 @@ angle_difference <- function(angle1, angle2) {
   diff <- atan2(sin(diff), cos(diff))  # Ensures result is between -π and π
   return(diff * (180 / pi))  # Convert to degrees
 }
-
+#could smooth with moving aves for x and y pos before angle calculations if #s too noisy 
 df_direction <- df %>% 
   group_by(ID) %>% 
   mutate(
@@ -240,8 +306,7 @@ df_direction <- df %>%
   ) %>% 
   ungroup()
 
-
-# plot direction changes by angle instead 
+# plot direction changes by angle 
 p<-ggplot(df_direction, aes(x = Xpos, y = Ypos, color = abs(angle_change_deg))) +
   geom_point(size = 2) +
   scale_color_gradient(low = "blue", high = "red",limits = c(0, 360)) +  # can make this a better scale too
@@ -252,11 +317,18 @@ p<-ggplot(df_direction, aes(x = Xpos, y = Ypos, color = abs(angle_change_deg))) 
   theme_minimal()
 p
 
-
-
-
-
-
+#output as total changes per minute, total time per min in revolutions 
+df_direction <- df_direction %>%
+  group_by(ID) %>%
+  summarize(
+    tot_time = (max(time, na.rm = TRUE) - min(time, na.rm = TRUE)) / 60,
+    angle_change = sum(abs(angle_change_deg), na.rm = TRUE), #make sure not cancel each other out 
+    full_rev = angle_change / 360, 
+    dir_change_rate = (full_rev / tot_time) # compute within the same step
+  )%>%
+  filter(dir_change_rate > 0) %>% 
+  ungroup()
+View(df_direction)
 # Summary Stats -----------------------------------------------------------
 p <- ggplot(summary_stats, aes(y = mean_PARatio, x = mean_speed, color = group)) + 
   geom_point(size = 1, alpha = 0.7) +  # Scatter plot points
