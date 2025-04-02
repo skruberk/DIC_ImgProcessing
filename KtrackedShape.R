@@ -1,5 +1,5 @@
 #K-Tracked Particles
-
+#xpos and ypos outputs are in microns, no need for conversion 
 #restart
 rm(list = ls())
 rm(list = ls(all.names = TRUE))
@@ -12,15 +12,15 @@ library(viridis) #color aesthetics
 #DO DATA IMPORT HERE##################dataimport 
 
 # NAME OF DATASET 
-name <- "62C_481_780_FOV_3" 
+name <- "70C_2675_2940_FOV_2" 
 df<-data
 # Define parameters
-k_neighbors <- 2 #start with 3
+k_neighbors <- 1 #start with 3
 #number of neighbors to check 1-3 seems to work for well sep particles, low noise
 #low noise, not lots of neighbors, 4-6 and higher: fast and erratic movement lots of 
 #neighbors noisy tracking 
-max_distance <- 15  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
-gap_tolerance <- 5  # Number of frames a particle can disappear before being reassigned, this number is very sensitive
+max_distance <- 5  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
+gap_tolerance <- 3  # Number of frames a particle can disappear before being reassigned, this number is very sensitive
 
 # Initialize Particle_ID column
 df$ID <- NA
@@ -94,7 +94,6 @@ df <- df %>%
     stepwise_speed = stepwise_displacement * (1 / t_int)  # Speed per step
   ) %>%
   ungroup()
-
 
 #see the trajectories
 p<-ggplot(df, aes(x = Xpos, y = Ypos, color = factor(ID), group = factor(ID))) +
