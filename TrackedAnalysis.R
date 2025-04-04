@@ -22,7 +22,8 @@ epsilon <- 1e-8 #prevent div by 0 error
 motility_mode <- df %>%
   mutate(
     AR_bin = case_when(
-      AR >= 1 & AR < 1.25 ~ "1-1.25",
+      AR >= 1 & AR < 1.1 ~ "1-1.1",
+      AR >= 1.1 & AR < 1.25 ~ "1.1-1.25",
       AR >= 1.25 & AR < 1.5 ~ "1.25-1.5",
       AR >= 1.5 & AR < 2.0 ~ "1.5-2",
       AR >= 2.0 & AR < 2.5 ~ "2-2.5",
@@ -60,10 +61,10 @@ df<-data
 #df$temp <- "66"  # name group in df
 
 summary_stats <- df %>%
-  group_by(temp, ID) %>%  # group by group and ID
+  group_by(temp, group,ID) %>%  # group by group and ID
   #filter(stepwise_speed > 0) %>%  # quality control
   summarise(
-    mean_speed = (mean(stepwise_speed, na.rm = TRUE)*60),
+    mean_speed = (mean(stepwise_speed, na.rm = TRUE)),
     median_speed=median(stepwise_speed,na.rm=TRUE),
     sd_speed = sd(stepwise_speed, na.rm = TRUE),
     mean_AR = mean(AR, na.rm = TRUE),
@@ -74,7 +75,12 @@ summary_stats <- df %>%
     distance=(mean(stepwise_displacement,na.rm=TRUE))/5*10,
     n = n()  # Count of observations
   ) %>%
-  ungroup()
+  ungroup() %>%
+mutate(
+  ci_speed_upper = median_speed + (1.96 * sd_speed / sqrt(n)),
+  ci_speed_lower = median_speed - (1.96 * sd_speed / sqrt(n))
+) %>%
+  filter(mean_speed >= ci_speed_lower & mean_speed <= ci_speed_upper) 
 View(summary_stats)
 
 
@@ -101,6 +107,65 @@ p
 p<-p + theme_bw()+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.x = element_blank()) + 
   ylab("Distance") 
 p
+
+library(ggplot2)
+
+summary_stats$temp <- as.factor(summary_stats$temp)  # Convert to factor
+#scatter plots for AR vs mean_speed in minutes
+p <- ggplot(summary_stats, aes(x = median_speed, y = median_AR, color = temp, group = temp)) + 
+  ylim(0, 5) + 
+  geom_point(size = 1.5, alpha = 0.5) +  # Scatter plot
+  geom_smooth(method = "lm", se = FALSE) +  # Best fit lines using linear regression
+  scale_color_viridis_d(option = "D", direction = 1) +  # Viridis color scale
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+        #axis.text.x = element_blank()) + 
+  ylab("Median AR")+
+  xlab("Median Velocity um/min")+
+  facet_wrap(~temp)  # Facet by temperature
+p
+
+
+# Mean Velocity per track length ------------------------------------------
+# Calculate mean velocity for each ID across groups, have to do each temp separately
+track_speed <- data %>%
+  arrange(group, ID, time) %>%  # Ensure data is ordered by group, ID, and time
+  group_by(group, ID) %>%
+  mutate(
+    X_shift = lead(Xpos),  # Get the X position of the next frame
+    Y_shift = lead(Ypos),  # Get the Y position of the next frame
+    time_shift = lead(time) # Get the time of the next frame
+  ) %>%
+  filter(!is.na(X_shift), !is.na(Y_shift), !is.na(time_shift)) %>%  # Remove rows with missing shifts
+  mutate(
+    speed = sqrt((X_shift - Xpos)^2 + (Y_shift - Ypos)^2) / (time_shift - time)  # Calculate speed (displacement / time)
+  ) %>%
+  summarise(median_velocity = median(speed, na.rm = TRUE))  # Calculate mean velocity for each ID
+
+# view it
+print(track_speed)
+track_speed$temp<-"70" #name group in df
+write_csv(track_speed, "70_comb_medtrackspeed.csv")
+
+#combine files
+path <- getwd()
+csvcomb <- list.files(path, pattern = "\\.csv$", full.names = TRUE)
+datacomb <- bind_rows(lapply(csvcomb, read_csv))
+# Save the combined data to a new CSV file
+write_csv(datacomb, "57-70_comb_mediantrackspeed.csv")
+
+#make micron/min
+datacomb <- datacomb %>%
+  mutate(median_velocity = median_velocity * 60)
+
+datacomb$temp <- as.factor(datacomb$temp)  # Convert to factor
+p<- ggplot(datacomb, aes(x=temp, y=median_velocity,group=temp))+ ylim(0,25)+ geom_boxplot(outlier.shape = NA)+ geom_beeswarm(dodge.width=1,aes(color = temp), size = 0.75, alpha = 1,cex=0.35) + scale_color_viridis_d(option = "D", direction = 1)#color by group eventully
+p 
+p<-p + theme_bw()+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.x = element_blank()) + 
+  ylab("Median Velocity per Track um/min") 
+p
+
 
 
 # Directional Change ------------------------------------------------------
