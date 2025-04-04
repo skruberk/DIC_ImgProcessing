@@ -9,27 +9,49 @@ angle_difference <- function(angle1, angle2) {
 }
 #could smooth with moving aves for x and y pos before angle calculations if #s too noisy
 df_direction <- df %>% 
-  arrange(group,ID,frame) %>%
+  arrange(group,ID,Frame) %>%
   group_by(group,ID) %>% 
   mutate(
     dx = Xpos - lag(Xpos, default = Xpos[1]),
     dy = Ypos - lag(Ypos, default = Ypos[1]), # displacement vector
     angle = atan2(dy, dx) * (180 / pi), # convert to degrees
     # use function to compute angle changes
-    angle_change_deg = c(NA, mapply(angle_difference, head(angle, -1), tail(angle, -1)))  # angle change calculation
-  ) %>% 
+    angle_change_deg = c(NA, unlist(mapply(angle_difference, head(angle, -1), tail(angle, -1)))  # angle change calculation
+  )) %>% 
   ungroup()
-#View(df_direction)
-df_direction <- df_direction %>%
-  group_by(temp,group,ID) %>%
-  summarize(
-    tot_time = (max(time, na.rm = TRUE) - min(time, na.rm = TRUE)) / 60,
-    angle_change = mean(abs(angle_change_deg), na.rm = TRUE),
-    dir_rate=(angle_change/tot_time)/360
-  )%>%
-  #filter(dir_change_rate > 0) %>% 
-  ungroup()
-#View(df_direction)
+
+#plotting
+# Plot with custom angle labels
+p <- ggplot(df_direction, aes(x = angle_change_deg, fill = as.factor(temp))) +
+  geom_histogram(binwidth = 10, aes(y = ..density..), alpha = 0.7, position = "identity") +
+  coord_polar(theta = "x") +  # Converts to circular plot
+  scale_fill_viridis_d() +
+  theme_minimal() +
+  facet_wrap(~temp) +  # Facet by temperature
+  labs(title = "Distribution of Turning Angles by Temperature",
+       x = "Angle Change (degrees)",
+       y = "Density",
+       fill = "Temperature") +
+  theme(
+    axis.text.y = element_blank(),  # Remove y-axis labels
+    axis.title.y = element_blank(),  # Remove y-axis title
+    strip.background = element_blank(),  # Remove background color from facet titles
+    strip.text = element_text(size = 12, face = "bold"),  # Facet title text style
+    panel.spacing = unit(2, "lines"),  # Increase space between facets
+    panel.background = element_blank(),  # Remove background fill of the entire plot
+    plot.background = element_blank(),  # Make entire plot background transparent
+    plot.margin = margin(5, 5, 5, 5)  # Add extra margin around the plot
+  ) +
+  # Custom angle labels (0°, 90°, -90°, 180°, -180°)
+  scale_x_continuous(
+    breaks = c(0, 90, -90, -180),
+    #labels = c("0°", "90°", "-90°", "180°", "-180°"),
+    limits = c(-180, 180)  # Ensure the angles are correctly displayed
+  )
+
+p
+
+View(df_direction)
 df_plot <- df_direction %>%
   group_by(temp,group,ID) %>%
   summarize(
