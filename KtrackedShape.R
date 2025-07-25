@@ -4,6 +4,21 @@
 rm(list = ls())
 rm(list = ls(all.names = TRUE))
 
+custom_colors <- c(
+  #"#5662B2",
+  "#6389c9",
+  "#9FCAFF",
+  "#d1d1d1",
+  "#D3BB9C",
+  "#D7A465",
+  "#F09900",
+  "#e9881a",
+  "#CD782E",
+  "#C1532D",
+  "#AD372A" 
+)
+
+
 ##########
 library(dplyr)
 library(FNN)  # Fast Nearest Neighbors package
@@ -12,14 +27,15 @@ library(viridis) #color aesthetics
 #DO DATA IMPORT HERE##################dataimport 
 
 # NAME OF DATASET 
-name <- "70C_2675_2940_FOV_2" 
+name <- "70C_3" 
 df<-data
+df$temp <- "60"  # name group in df
 # Define parameters
-k_neighbors <- 1 #start with 3
+k_neighbors <- 2 #start with 3
 #number of neighbors to check 1-3 seems to work for well sep particles, low noise
 #low noise, not lots of neighbors, 4-6 and higher: fast and erratic movement lots of 
 #neighbors noisy tracking 
-max_distance <- 5  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
+max_distance <- 3  # Maximum allowed displacement, is it moving fast? up this #:25 isn't unreasonable for v fast
 gap_tolerance <- 3  # Number of frames a particle can disappear before being reassigned, this number is very sensitive
 
 # Initialize Particle_ID column
@@ -53,7 +69,7 @@ for (frame in unique(df$Frame)[-1]) {
       
       # has ID already been assigned to frame?>
       if (!(matched_ID %in% assigned_IDs)) {
-        df$ID[df$Frame == frame & df$Xpos == current$Xpos[i] & df$Ypos == current$Ypos[i]] <- matched_ID
+        df$ID[df$Frame == frame & near(df$Xpos, current$Xpos[i]) & near(df$Ypos, current$Ypos[i])] <- matched_ID
         assigned_IDs <- c(assigned_IDs, matched_ID)  # mark ID as used
       } else {
         # if ID already taken assign new one
@@ -70,10 +86,10 @@ for (frame in unique(df$Frame)[-1]) {
 #filter short lived particles, QC 
 df <- df %>%
   group_by(ID) %>%
-  filter(n() > 3)%>%   # Remove particles appearing in fewer than x frames
+  filter(n() > 5)%>%   # remove particles appearing in fewer than x frames
   ungroup()
 
-t_int=5 #seconds/frame
+t_int=1 #seconds/frame
 df$time <- df$Frame * t_int
 #get instantaneous displacement at each step, euclidean distance
 df <- df %>%
@@ -87,24 +103,39 @@ df <- df %>%
   mutate(
     stepwise_displacement = replace_na(stepwise_displacement, 0)
   ) %>%
-  # Filter out rows where stepwise displacement is greater than 20
-  filter(stepwise_displacement <= 10 | stepwise_displacement == 0) %>%
+  # filter out rows where stepwise displacement is greater than X
+  filter(stepwise_displacement <= 5 | stepwise_displacement == 0) %>%
   mutate(
-    # Calculate stepwise speed
+    # calculate stepwise speed
     stepwise_speed = stepwise_displacement * (1 / t_int)  # Speed per step
   ) %>%
   ungroup()
+#summary(df$Xpos)
+#summary(df$Ypos)
+#see the trajectories (note that the origin in fiji is at the top left corner)
+p <- ggplot(df, aes(x = Xpos, y = Ypos, color = factor(ID), group = factor(ID))) +
+  geom_path() +
+  xlim(0,325)+
+  ylim(0,325)+
+  labs(
+    title = "Particle Trajectories",
+    x = "X Position",
+    y = "Y Position",
+    color = "Particle ID"
+  ) +
+  scale_color_viridis_d(option = "D") +
+  scale_y_reverse() +   # <-- This flips the Y-axis
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank()
+  )
 
-#see the trajectories
-p<-ggplot(df, aes(x = Xpos, y = Ypos, color = factor(ID), group = factor(ID))) +
-  geom_path() +  # Connect points to form trajectories
-  labs(title = "Particle Trajectories", x = "X Position", y = "Y Position", color = "Particle ID") +
-  theme_minimal()+
-  theme(legend.position = "none")
 p
 
-#track quality control
-# Ensure data is ordered correctly
+
+######track quality control#####
+# order data correctly
 df <- df %>% arrange(ID, frame)
 
 # Calculate stepwise displacement sum for each track
@@ -124,7 +155,7 @@ id_changes <- df %>%
 track_quality_metrics <- track_length %>%
   left_join(id_changes, by = "ID")
 
-# Output QC results
+# output QC results
 write.csv(track_quality_metrics, paste0(name, "_trajectoryQC.csv"), row.names = FALSE)
 
 #convert from microns back to pixels for image comparison 
@@ -138,6 +169,8 @@ df <- df %>%
     Y_pixel = Ypos / pixel_height
   )
 #does this trajectory look somewhat like your max ip? if v much no, go change settings
+df <- df %>%
+  mutate(AR = df$Major / df$Minor)
 p <- ggplot(df, aes(x = Xpos, y = Ypos, group = ID, color = AR)) +    
   #geom_path(size = 1) +    # Plot trajectory
   geom_point(size = 2) +   # Mark each recorded position
